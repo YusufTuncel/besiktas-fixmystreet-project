@@ -6,11 +6,12 @@ import { CATS, Scan, hoodOf } from "@/lib/data";
 
 interface Props {
   scan: Scan; pick: { x: number; y: number }; offline: boolean; queueLen: number; karma: number;
-  onSubmit: () => void; onClaim: () => void;
+  onSubmit: (file?: File) => void; onClaim: () => void;
 }
 export default function ReportForm({ scan, pick, offline, queueLen, karma, onSubmit, onClaim }: Props) {
   const [open, setOpen] = useState(false);
   const [photo, setPhoto] = useState<string>();
+  const [file, setFile] = useState<File>();
   const show = open || scan.phase !== "idle";
   const meta = scan.cat ? CATS[scan.cat] : undefined;
   return (
@@ -22,7 +23,7 @@ export default function ReportForm({ scan, pick, offline, queueLen, karma, onSub
       {show && (
         <div className="space-y-3 panel p-3">
           <label className="relative block h-44 cursor-pointer overflow-hidden rounded bg-gradient-to-br from-zinc-700 via-zinc-800 to-zinc-900">
-            <input type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) setPhoto(URL.createObjectURL(f)); }} />
+            <input type="file" accept="image/*" className="hidden" onChange={(e) => { const f = e.target.files?.[0]; if (f) { setPhoto(URL.createObjectURL(f)); setFile(f); } }} />
             {photo ? <img src={photo} alt="Yüklenen fotoğraf" className="h-full w-full object-cover" /> : (
               <span className="absolute inset-0 flex flex-col items-center justify-center text-sm text-zinc-400">
                 <svg viewBox="0 0 200 60" className="mb-2 w-40 opacity-50"><path d="M0 40 L60 38 L80 30 L100 44 L130 36 L200 38" stroke="#9ca3af" strokeWidth="3" fill="none" /></svg>
@@ -44,7 +45,7 @@ export default function ReportForm({ scan, pick, offline, queueLen, karma, onSub
             <p className="text-zinc-400">Konum: {hoodOf(pick.x, pick.y)} (haritaya tıklayarak değiştir)</p>
           </div>
 
-          <button disabled={scan.phase === "scanning"} onClick={onSubmit} className="w-full rounded bg-red-600 py-2 text-sm font-medium text-white hover:bg-red-500 disabled:opacity-50">
+          <button disabled={scan.phase === "scanning"} onClick={() => onSubmit(file)} className="w-full rounded bg-red-600 py-2 text-sm font-medium text-white hover:bg-red-500 disabled:opacity-50">
             {offline ? "Çevrimdışı kuyruğa ekle" : "İhbarı gönder"}
           </button>
         </div>

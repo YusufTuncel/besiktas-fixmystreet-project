@@ -2,7 +2,7 @@ export type Status = "pending" | "enroute" | "working" | "resolved";
 export interface Report {
   id: string; x: number; y: number; cat: string; dept: string; sla: string; status: Status;
   supporters: number; team: string; hood: string; street: string; desc: string;
-  ageH: number; eta?: number; mine?: boolean; rewarded?: boolean;
+  ageH: number; eta?: number; mine?: boolean; rewarded?: boolean; uid?: string; photo?: string;
 }
 export interface Scan { phase: "idle" | "scanning" | "done"; cat?: string; conf?: number }
 

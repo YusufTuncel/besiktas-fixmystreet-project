@@ -1,39 +1,68 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
-import { Shield, Smartphone, Download, Camera, AlertTriangle, Truck, Gift, WifiOff, Wifi, Activity } from "lucide-react";
+import { Shield, Smartphone, Download, Camera, AlertTriangle, Truck, Gift, WifiOff, Wifi, Activity, LogOut } from "lucide-react";
 import BesiktasMap from "@/components/BesiktasMap";
 import Tracker from "@/components/Tracker";
 import ReportForm from "@/components/ReportForm";
 import CommandPanel, { LogLine } from "@/components/CommandPanel";
-import { BASE, CATS, DEFAULT_LOC, Report, SEED, Scan, TEAMS, hoodOf, slug, streetOf } from "@/lib/data";
+import { BASE, CATS, DEFAULT_LOC, Report, Scan, Status, TEAMS, hoodOf, slug, streetOf } from "@/lib/data";
+import AuthGate, { Sess } from "@/components/AuthGate";
+import { supabase } from "@/lib/supabase";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-export default function Page() {
+type Row = { id: string; code: string; category: string; department: string; sla: string | null; status: Status; x: number | null; y: number | null; hood: string | null; street: string | null; description: string | null; supporters: number; team: string | null; photo_path: string | null; created_by: string | null; created_at: string };
+const toReport = (r: Row, uid: string): Report => ({
+  id: r.code, uid: r.id, x: r.x ?? 0, y: r.y ?? 0, cat: r.category, dept: r.department, sla: r.sla ?? "", status: r.status,
+  supporters: r.supporters, team: r.team ?? "—", hood: r.hood ?? "", street: r.street ?? "", desc: r.description ?? "",
+  ageH: (Date.now() - new Date(r.created_at).getTime()) / 36e5, photo: r.photo_path ?? undefined, mine: r.created_by === uid,
+});
+
+function App({ user, role, signOut: onSignOut }: Sess) {
+  const staff = role === "supervisor" || role === "field";
   const [mode, setMode] = useState<"citizen" | "command">("citizen");
-  const [reports, setReports] = useState<Report[]>(SEED);
+  const [dbReports, setDbReports] = useState<Report[]>([]);
+  const [etas, setEtas] = useState<Record<string, number>>({});
+  const [rewarded, setRewarded] = useState<string[]>([]);
   const [logs, setLogs] = useState<LogLine[]>([]);
   const [scan, setScan] = useState<Scan>({ phase: "idle" });
   const [dup, setDup] = useState<Report | null>(null);
   const [toast, setToast] = useState("");
   const [offline, setOffline] = useState(false);
-  const [queue, setQueue] = useState<Report[]>([]);
+  const [queue, setQueue] = useState<Record<string, unknown>[]>([]);
   const [karma, setKarma] = useState(120);
   const [vehicle, setVehicle] = useState<{ x: number; y: number } | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
+  const [photoUrl, setPhotoUrl] = useState<string>();
   const [pick, setPick] = useState(DEFAULT_LOC);
+  const reports = dbReports.map((r) => ({ ...r, eta: etas[r.id] ?? r.eta, rewarded: rewarded.includes(r.id) }));
   const rep = useRef(reports); rep.current = reports;
   const off = useRef(offline); off.current = offline;
   const busy = useRef(false);
 
-  useEffect(() => { try { setQueue(JSON.parse(localStorage.getItem("bs-queue") || "[]")); } catch {} }, []);
-  useEffect(() => { try { localStorage.setItem("bs-queue", JSON.stringify(queue)); } catch {} }, [queue]);
-
   const log = (m: string, c = "text-zinc-300") => setLogs((l) => [...l.slice(-60), { t: new Date().toLocaleTimeString("tr-TR"), m, c }]);
   const notify = (m: string) => { setToast(m); setTimeout(() => setToast(""), 4000); };
 
-  async function submit(loc = pick, catName?: string) {
+  async function load() {
+    const { data, error } = await supabase.from("reports").select("*").order("created_at", { ascending: true });
+    if (error) return notify("Veri alınamadı: " + error.message);
+    setDbReports((data as Row[]).map((r) => toReport(r, user.id)));
+  }
+  useEffect(() => {
+    load();
+    const ch = supabase.channel("reports-live").on("postgres_changes", { event: "*", schema: "public", table: "reports" }, () => load()).subscribe();
+    return () => { supabase.removeChannel(ch); };
+  }, []);
+  useEffect(() => { try { setQueue(JSON.parse(localStorage.getItem("bs-queue") || "[]")); } catch {} }, []);
+  useEffect(() => { try { localStorage.setItem("bs-queue", JSON.stringify(queue)); } catch {} }, [queue]);
+  const selPhoto = reports.find((x) => x.id === selected)?.photo;
+  useEffect(() => {
+    setPhotoUrl(undefined);
+    if (selPhoto) supabase.storage.from("report-photos").createSignedUrl(selPhoto, 300).then(({ data }) => setPhotoUrl(data?.signedUrl));
+  }, [selPhoto]);
+
+  async function submit(loc = pick, catName?: string, file?: File) {
     if (busy.current) return;
     busy.current = true;
     try {
@@ -51,53 +80,68 @@ export default function Page() {
       log("[DUPLICATE_CHECK_PASSED]", "text-emerald-400");
       const { dept, sla } = CATS[cat];
       const hood = hoodOf(loc.x, loc.y);
-      const r: Report = { id: "BS-" + Math.floor(3000 + Math.random() * 6000), ...loc, cat, dept, sla, status: "pending", supporters: 1, team: "—", hood, street: streetOf(hood), desc: `${hood} bölgesinde ${cat.toLowerCase()}`, ageH: 0, mine: true };
-      if (off.current) { setQueue((q) => [...q, r]); log("[OFFLINE_QUEUED] ihbar cihazda saklandı", "text-amber-400"); notify("Bağlantı yok: ihbar cihazda saklandı"); return; }
-      setReports((x) => [...x, r]); setSelected(r.id);
+      const payload: Record<string, unknown> = { category: cat, department: dept, sla, status: "pending", x: loc.x, y: loc.y, hood, street: streetOf(hood), description: `${hood} bölgesinde ${cat.toLowerCase()}`, supporters: 1 };
+      if (off.current) { setQueue((q) => [...q, payload]); log("[OFFLINE_QUEUED] ihbar cihazda saklandı", "text-amber-400"); notify("Bağlantı yok: ihbar cihazda saklandı"); return; }
+      if (file) {
+        const path = `${user.id}/${crypto.randomUUID()}.${(file.name.split(".").pop() || "jpg").toLowerCase()}`;
+        const { error: ue } = await supabase.storage.from("report-photos").upload(path, file);
+        if (ue) notify("Fotoğraf yüklenemedi: " + ue.message); else payload.photo_path = path;
+      }
+      const { data, error } = await supabase.from("reports").insert(payload).select().single();
+      if (error) return notify("İhbar kaydedilemedi: " + error.message);
+      await load(); setSelected((data as Row).code);
       log(`[AUTO_DISPATCHED_TO_${slug(dept)}] SLA ${sla}`, "text-fuchsia-400");
-      notify(`${r.id} oluşturuldu → ${dept}`);
+      notify(`${(data as Row).code} oluşturuldu → ${dept}`);
     } finally { busy.current = false; }
   }
 
   async function dispatch(id?: string) {
+    if (!staff) return notify("Ekip yönlendirmek için amir veya saha hesabı gerekir");
     const pend = rep.current.filter((r) => r.status === "pending");
     const t = pend.find((r) => r.id === id) || pend.find((r) => r.id === selected) || pend.find((r) => r.mine) || pend[0];
     if (!t) return notify("Bekleyen ihbar yok");
     const team = TEAMS[t.dept];
-    const upd = (p: Partial<Report>) => setReports((x) => x.map((r) => (r.id === t.id ? { ...r, ...p } : r)));
-    upd({ status: "enroute", team, eta: 14 }); setSelected(t.id);
-    log(`[TEAM_EN_ROUTE] ${team} → ${t.id}`, "text-yellow-400");
+    const set = async (status: Status, tm?: string) => {
+      const { error } = await supabase.from("reports").update(tm ? { status, team: tm } : { status }).eq("code", t.id);
+      if (error) notify("Güncellenemedi: " + error.message);
+      else await load();
+      return !error;
+    };
+    if (!(await set("enroute", team))) return;
+    setSelected(t.id); log(`[TEAM_EN_ROUTE] ${team} → ${t.id}`, "text-yellow-400");
     const N = 30;
     for (let i = 1; i <= N; i++) {
       await sleep(110);
       setVehicle({ x: BASE.x + ((t.x - BASE.x) * i) / N, y: BASE.y + ((t.y - BASE.y) * i) / N });
-      if (i % 3 === 0) upd({ eta: Math.max(1, Math.ceil(14 * (1 - i / N))) });
+      if (i % 3 === 0) setEtas((e) => ({ ...e, [t.id]: Math.max(1, Math.ceil(14 * (1 - i / N))) }));
     }
-    upd({ status: "working", eta: 0 }); log("[REPAIR_IN_PROGRESS]", "text-yellow-400");
+    await set("working"); log("[REPAIR_IN_PROGRESS]", "text-yellow-400");
     await sleep(2200);
-    upd({ status: "resolved" }); setVehicle(null); log(`[TICKET_RESOLVED] ${t.id}`, "text-emerald-400");
+    await set("resolved"); setVehicle(null); log(`[TICKET_RESOLVED] ${t.id}`, "text-emerald-400");
     notify(t.mine ? "İhbarınız çözüldü! Karma puanınızı alabilirsiniz." : `${t.id} çözüldü`);
   }
 
   function claim() {
     const r = rep.current.find((x) => x.mine && x.status === "resolved" && !x.rewarded);
     if (!r) return notify("Puan için önce bir ihbarın çözülmesi gerekir");
-    setReports((x) => x.map((y) => (y.id === r.id ? { ...y, rewarded: true } : y)));
-    setKarma((k) => k + 50); log(`[KARMA_AWARDED] +50 → ${r.id}`, "text-emerald-400");
+    setRewarded((x) => [...x, r.id]); setKarma((k) => k + 50); log(`[KARMA_AWARDED] +50 → ${r.id}`, "text-emerald-400");
     notify("Tebrikler! İhbarınız çözüldü, 50 Beşiktaş Puan kazandınız.");
   }
 
-  function supportDup() {
+  async function supportDup() {
     if (!dup) return;
-    setReports((x) => x.map((r) => (r.id === dup.id ? { ...r, supporters: r.supporters + 1 } : r)));
-    log(`[SUPPORTER_ADDED] ${dup.id}`, "text-emerald-400"); setSelected(dup.id); setDup(null);
+    const { error } = await supabase.rpc("add_supporter", { rid: dup.uid });
+    if (error) return notify("Destek eklenemedi: " + error.message);
+    log(`[SUPPORTER_ADDED] ${dup.id}`, "text-emerald-400"); setSelected(dup.id); setDup(null); await load();
     notify("İki kayıt birleştirildi, takipçi olarak eklendiniz.");
   }
 
-  function toggleOffline() {
+  async function toggleOffline() {
     if (offline && queue.length) {
-      setReports((x) => [...x, ...queue]); log(`[SYNC_COMPLETE] ${queue.length} ihbar merkeze eşitlendi`, "text-emerald-400");
-      notify(`${queue.length} bekleyen ihbar merkeze eşitlendi`); setQueue([]);
+      const { error } = await supabase.from("reports").insert(queue);
+      if (error) return notify("Eşitlenemedi: " + error.message);
+      log(`[SYNC_COMPLETE] ${queue.length} ihbar merkeze eşitlendi`, "text-emerald-400");
+      notify(`${queue.length} bekleyen ihbar merkeze eşitlendi`); setQueue([]); await load();
     }
     setOffline(!offline);
   }
@@ -113,13 +157,14 @@ export default function Page() {
         <div className="flex flex-wrap items-center gap-2 text-sm">
           <div className="flex overflow-hidden rounded-full border border-white/15 bg-black/30 p-0.5">
             <button onClick={() => setMode("citizen")} className={`flex items-center gap-1.5 rounded-full px-4 py-1.5 transition ${mode === "citizen" ? "bg-white font-medium text-black" : "text-zinc-300"}`}><Smartphone size={14} /> Vatandaş modu</button>
-            <button onClick={() => setMode("command")} className={`flex items-center gap-1.5 rounded-full px-4 py-1.5 transition ${mode === "command" ? "bg-white font-medium text-black" : "text-zinc-300"}`}><Shield size={14} /> Amir komuta paneli</button>
+            <button disabled={role !== "supervisor"} title="Sadece amir hesapları" onClick={() => setMode("command")} className={`flex items-center gap-1.5 rounded-full px-4 py-1.5 transition disabled:opacity-40 ${mode === "command" ? "bg-white font-medium text-black" : "text-zinc-300"}`}><Shield size={14} /> Amir komuta paneli</button>
           </div>
+          <button onClick={onSignOut} className={demo}><LogOut size={14} /> {user.email}</button>
           <button onClick={() => window.print()} className={demo}><Download size={14} /> Saha operasyon raporu (PDF)</button>
         </div>
       </header>
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        {([["Canlı ihbar", String(1284 + reports.length - SEED.length), "bugün +" + (reports.length - SEED.length + 38)], ["Çözüm oranı", "%94", "son 30 gün"], ["Ort. müdahale (MTTR)", "42 dk", "hedef 60 dk"], ["Sahadaki ekip", String(reports.filter((r) => r.status === "enroute" || r.status === "working").length), "4 müdürlük"]] as const).map(([k, v, n]) => (
+        {([["Canlı ihbar", String(1284 + reports.length), "bugün +" + (reports.length + 38)], ["Çözüm oranı", "%94", "son 30 gün"], ["Ort. müdahale (MTTR)", "42 dk", "hedef 60 dk"], ["Sahadaki ekip", String(reports.filter((r) => r.status === "enroute" || r.status === "working").length), "4 müdürlük"]] as const).map(([k, v, n]) => (
           <div key={k} className="panel px-4 py-3"><p className="flex items-center gap-1.5 text-xs text-zinc-400">{k === "Canlı ihbar" && <Activity size={12} className="text-emerald-400" />}{k}</p><p className="text-3xl font-bold tabular-nums">{v}</p><p className="text-[11px] text-zinc-500">{n}</p></div>
         ))}
       </div>
@@ -134,9 +179,9 @@ export default function Page() {
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[1.5fr_1fr]">
-        <BesiktasMap reports={reports} vehicle={vehicle} selected={selected} onSelect={setSelected} pick={pick} onPick={setPick} showPick={mode === "citizen"} />
+        <BesiktasMap photoUrl={photoUrl} reports={reports} vehicle={vehicle} selected={selected} onSelect={setSelected} pick={pick} onPick={setPick} showPick={mode === "citizen"} />
         {mode === "citizen"
-          ? <div className="space-y-4"><ReportForm scan={scan} pick={pick} offline={offline} queueLen={queue.length} karma={karma} onSubmit={() => submit()} onClaim={claim} /><Tracker r={[...reports].reverse().find((x) => x.mine)} /></div>
+          ? <div className="space-y-4"><ReportForm scan={scan} pick={pick} offline={offline} queueLen={queue.length} karma={karma} onSubmit={(f) => submit(pick, undefined, f)} onClaim={claim} /><Tracker r={[...reports].reverse().find((x) => x.mine)} /></div>
           : <CommandPanel reports={reports} logs={logs} selected={selected} onSelect={setSelected} onDispatch={dispatch} />}
       </div>
 
@@ -161,4 +206,8 @@ export default function Page() {
       </AnimatePresence>
     </main>
   );
+}
+
+export default function Page() {
+  return <AuthGate>{(s) => <App {...s} />}</AuthGate>;
 }

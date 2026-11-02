@@ -4,10 +4,10 @@ import { HOODS, BASE, Report, STATUS_COLOR, STATUS_LABEL, STEPS, STEP_IDX, hoodO
 
 const ICON: Record<string, string> = { "Bozuk Asfalt": "🛣️", "Kırık Kaldırım": "🚧", "Çölleşmiş Park": "🌳", "Kaçak Çöp": "🗑️", "Sokak Lambası": "💡" };
 interface Props {
-  reports: Report[]; vehicle: { x: number; y: number } | null; selected: string | null;
+  photoUrl?: string; reports: Report[]; vehicle: { x: number; y: number } | null; selected: string | null;
   onSelect: (id: string | null) => void; pick: { x: number; y: number }; onPick: (p: { x: number; y: number }) => void; showPick: boolean;
 }
-export default function BesiktasMap({ reports, vehicle, selected, onSelect, pick, onPick, showPick }: Props) {
+export default function BesiktasMap({ photoUrl, reports, vehicle, selected, onSelect, pick, onPick, showPick }: Props) {
   const sel = reports.find((r) => r.id === selected);
   return (
     <div className="panel relative overflow-hidden p-1.5">
@@ -59,7 +59,7 @@ export default function BesiktasMap({ reports, vehicle, selected, onSelect, pick
       {sel && (
         <div className="absolute z-10 w-60 rounded-xl border border-white/15 bg-zinc-950/95 p-3 text-xs shadow-2xl"
           style={{ left: `clamp(8px, calc(${sel.x / 6}% - 120px), calc(100% - 248px))`, top: sel.y < 200 ? `${sel.y / 4 + 6}%` : undefined, bottom: sel.y >= 200 ? `${100 - sel.y / 4 + 6}%` : undefined }}>
-          <div className="mb-2 flex h-20 items-center justify-center gap-2 rounded-lg bg-gradient-to-br from-zinc-700 to-zinc-900 text-zinc-300"><Camera size={16} /> {sel.cat}</div>
+          {photoUrl ? <img src={photoUrl} alt={sel.cat} className="mb-2 h-20 w-full rounded-lg object-cover" /> : <div className="mb-2 flex h-20 items-center justify-center gap-2 rounded-lg bg-gradient-to-br from-zinc-700 to-zinc-900 text-zinc-300"><Camera size={16} /> {sel.cat}</div>}
           <p className="font-semibold">{sel.id} · {sel.street}</p>
           <p className="mt-1 text-zinc-400">{sel.desc}</p>
           <p className="mt-2 flex items-center gap-1"><Users size={13} /> {sel.supporters} vatandaş destekliyor</p>
