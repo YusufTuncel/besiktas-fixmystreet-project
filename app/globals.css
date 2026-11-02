@@ -1,0 +1,11 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+body {
+  background: radial-gradient(1100px 560px at 12% -10%, #1b2433 0, transparent 60%), radial-gradient(900px 480px at 100% 0, #2a1118 0, transparent 55%), #07080b;
+  background-attachment: fixed; color: #e5e7eb;
+  font-family: ui-sans-serif, "Segoe UI Variable", "Segoe UI", system-ui, sans-serif; letter-spacing: -0.005em;
+}
+.panel { background: rgba(255,255,255,.04); border: 1px solid rgba(255,255,255,.09); border-radius: 14px; backdrop-filter: blur(8px); }
+@media print { header button, .no-print { display: none !important; } body { background: #fff; } }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
